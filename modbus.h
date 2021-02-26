@@ -6,11 +6,11 @@
 #define MODBUSPP_MODBUS_H
 
 #include <cstring>
-#include <iostream>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
+#include <string>
+#include "Network.h"
+#include "mbed.h"
+#include "NetworkStack.h"
+#include "EthernetInterface.h"
 
 
 #define MAX_MSG_LENGTH 260
@@ -50,12 +50,12 @@ class modbus {
 private:
     bool _connected{};
     uint16_t PORT{};
-    int _socket{};
+    TCPSocket _socket;
     uint _msg_id{};
     int _slaveid{};
     std::string HOST;
 
-    struct sockaddr_in _server{};
+    //struct sockaddr_in _server{};
 
 
     inline void modbus_build_request(uint8_t *to_send, uint address, int func) const;
@@ -64,7 +64,7 @@ private:
     int modbus_write(int address, uint amount, int func, const uint16_t *value);
 
     inline ssize_t modbus_send(uint8_t *to_send, int length);
-    inline ssize_t modbus_receive(uint8_t *buffer) const;
+    inline ssize_t modbus_receive(uint8_t *buffer);
 
     void modbuserror_handle(const uint8_t *msg, int func);
 
@@ -84,7 +84,7 @@ public:
     ~modbus();
 
     bool modbus_connect();
-    void modbus_close() const;
+    void modbus_close();
 
     void modbus_set_slave_id(int id);
 
@@ -143,36 +143,24 @@ void modbus::modbus_set_slave_id(int id) {
  */
 bool modbus::modbus_connect() {
     if(HOST.empty() || PORT == 0) {
-        std::cout << "Missing Host and Port" << std::endl;
+        printf("Missing Host and Port\n");
         return false;
     } else {
-        std::cout << "Found Proper Host "<< HOST << " and Port " <<PORT <<std::endl;
+        printf("Found Proper Host %d and Port %d\n", HOST, PORT);
     }
 
-    _socket = socket(AF_INET, SOCK_STREAM, 0);
-    if(_socket == -1) {
-        std::cout <<"Error Opening Socket" <<std::endl;
-        return false;
-    } else {
-        std::cout <<"Socket Opened Successfully" << std::endl;
-    }
+    SocketAddress addr;
+    addr.set_ip_address(HOST.c_str());
+    addr.set_port(PORT);
 
-    struct timeval timeout{};
-    timeout.tv_sec  = 20;  // after 20 seconds connect() will timeout
-    timeout.tv_usec = 0;
-    setsockopt(_socket, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    setsockopt(_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-
-    _server.sin_family = AF_INET;
-    _server.sin_addr.s_addr = inet_addr(HOST.c_str());
-    _server.sin_port = htons(PORT);
-
-    if (connect(_socket, (struct sockaddr*)&_server, sizeof(_server)) < 0) {
-        std::cout<< "Connection Error" << std::endl;
+    _socket.open(Network::getInstance()->getEthInterface());
+    if ( nsapi_error_t err = _socket.connect(addr) != 0 )
+    {
+        printf("Connection Error %d\n", err);
         return false;
     }
 
-    std::cout<< "Connected" <<std::endl;
+    printf("Connected\n");
     _connected = true;
     return true;
 }
@@ -181,9 +169,9 @@ bool modbus::modbus_connect() {
 /**
  * Close the Modbus/TCP Connection
  */
-void modbus::modbus_close() const {
-    close(_socket);
-    std::cout <<"Socket Closed" <<std::endl;
+void modbus::modbus_close() {
+    _socket.close();
+    printf("Socket Closed\n");
 }
 
 
@@ -533,7 +521,7 @@ int modbus::modbus_write_registers(int address, int amount, const uint16_t *valu
  */
 ssize_t modbus::modbus_send(uint8_t *to_send, int length) {
     _msg_id++;
-    return send(_socket, to_send, (size_t)length, 0);
+    return _socket.send(to_send, (size_t)length);
 }
 
 
@@ -542,8 +530,8 @@ ssize_t modbus::modbus_send(uint8_t *to_send, int length) {
  * @param buffer Buffer to Store the Data Retrieved
  * @return       Size of Incoming Data
  */
-ssize_t modbus::modbus_receive(uint8_t *buffer) const {
-    return recv(_socket, (char *) buffer, 1024, 0);
+ssize_t modbus::modbus_receive(uint8_t *buffer) {
+    return _socket.recv((char *) buffer, 1024);
 }
 
 void modbus::set_bad_con() {
